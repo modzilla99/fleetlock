@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/collectors"
@@ -27,6 +28,9 @@ type Server struct {
 	log *logrus.Logger
 	// metrics
 	metrics *metrics
+
+	// Time based lock
+	timeLock *timeLock
 
 	// Kubernetes
 	namespace  string
@@ -69,10 +73,15 @@ func NewServer(config *Config) (http.Handler, error) {
 	if err != nil {
 		return nil, fmt.Errorf("fleetlock: register metrics error: %v", err)
 	}
-
+	
+	timeLock, err := NewTimeLock()
+	if err != nil {
+		return nil, fmt.Errorf("fleetlock: Unable to create time lock: %v", err)
+	}
 	s := &Server{
 		log:        config.Logger,
 		metrics:    metrics,
+		timeLock:   timeLock,
 		namespace:  namespace,
 		kubeClient: kubeClient,
 	}
@@ -108,8 +117,8 @@ func (s *Server) lock(w http.ResponseWriter, req *http.Request) {
 		encodeReply(w, NewReply(KindDecodeError, "error decoding message"))
 		return
 	}
-	id := msg.ClientParmas.ID
-	group := msg.ClientParmas.Group
+	id := msg.ClientParams.ID
+	group := msg.ClientParams.Group
 	rebootLease := s.newRebootLease(group)
 
 	fields := logrus.Fields{
@@ -141,6 +150,13 @@ func (s *Server) lock(w http.ResponseWriter, req *http.Request) {
 
 		// best effort, do not gate on drain succeeding
 		_ = s.DrainNode(ctx, id)
+		return
+	}
+
+	// check if timeslot is allowed
+	if s.timeLock.IsActive() && !s.timeLock.CanLock(time.Now()) {
+		s.log.WithFields(fields).Debug("fleetlock: Cannot aquire lock as wrong time it is")
+		encodeReply(w, NewReply(KindLockHeld, "reboot lease lock unavailable, timeslot is unavailable"))
 		return
 	}
 
@@ -180,8 +196,8 @@ func (s *Server) unlock(w http.ResponseWriter, req *http.Request) {
 		encodeReply(w, NewReply(KindDecodeError, "error decoding message"))
 		return
 	}
-	id := msg.ClientParmas.ID
-	group := msg.ClientParmas.Group
+	id := msg.ClientParams.ID
+	group := msg.ClientParams.Group
 	rebootLease := s.newRebootLease(group)
 
 	fields := logrus.Fields{

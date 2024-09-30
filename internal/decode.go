@@ -8,7 +8,7 @@ import (
 
 // Message represents a FleetLock protocol client request.
 type Message struct {
-	ClientParmas struct {
+	ClientParams struct {
 		ID    string `json:"id"`
 		Group string `json:"group"`
 	} `json:"client_params"`
@@ -22,11 +22,11 @@ func decodeMessage(req *http.Request) (*Message, error) {
 		return nil, err
 	}
 
-	if msg.ClientParmas.ID == "" {
+	if msg.ClientParams.ID == "" {
 		return nil, fmt.Errorf("message missing id: %v", msg)
 	}
 
-	if msg.ClientParmas.Group == "" {
+	if msg.ClientParams.Group == "" {
 		return nil, fmt.Errorf("message missing group: %v", msg)
 	}
 
